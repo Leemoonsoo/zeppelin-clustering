@@ -1,0 +1,8 @@
+%table
+name	value
+a	10
+b	11
+c	12
+aa	100
+bb	110
+cc	120
