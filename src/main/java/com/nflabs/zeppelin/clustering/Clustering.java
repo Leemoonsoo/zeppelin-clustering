@@ -40,25 +40,65 @@ public class Clustering extends Application {
   private SparkContext sc;
   private JavaSparkContext jsc;
   private InterpreterContext context;
+  private TableData tableData;
 
   @Override
   protected void onChange(String name, Object oldObject, Object newObject) {
     System.err.println("Change " + name + " : " + oldObject + " -> " + newObject);
-    if (name.equals("run") && newObject.equals("running")) {
-      System.err.println("Refresh");
-      refresh();
+    if (name.equals("run")) {
+      int numClusters = Integer.parseInt(this.get(context, "numCluster").toString());
+      int numIterations = Integer.parseInt(this.get(context, "iteration").toString());
+
+
+      int col = -1;
+      // find first numeric column
+      ColumnDef[] columnDef = tableData.getColumnDef();
+
+
+      for (int c = 0; c < columnDef.length; c++) {
+        try {
+          Float.parseFloat((String) tableData.getData(0, c));
+          col = c;
+          break;
+        } catch (Exception e) {
+          continue;
+        }
+      }
+
+      if (col == -1) {
+        return;
+      }
+
+      LinkedList<Vector> vectors = new LinkedList<Vector>();
+
+      for (int i = 0 ; i < tableData.length(); i++) {
+        double val = Double.parseDouble(tableData.getData(i, col).toString());
+        vectors.add(Vectors.dense(val));
+      }
+
+      JavaRDD<Vector> inputVector = jsc.parallelize(vectors).cache();
+      KMeansModel clusters = KMeans.train(inputVector.rdd(), numClusters, numIterations);
+
+      StringWriter msg = new StringWriter();
+      // header
+      for (int c = 0; c < columnDef.length; c++) {
+        msg.write(columnDef[c].getName() + "\t");
+      }
+      msg.write("cluster\n");
+
+      for (int r = 0; r < tableData.length(); r++) {
+        for (int c = 0; c < columnDef.length; c++) {
+          msg.write(tableData.getData(r, c).toString() + "\t");
+        }
+        msg.write(clusters.predict(
+            Vectors.dense(Double.parseDouble(tableData.getData(r, col).toString()))) + "\n");
+      }
+
+      this.put(context, "result", msg.toString());
+      this.put(context, "run", "idle");
     }
   }
 
-  public void refresh() {
-    for (InterpreterContextRunner runner : context.getRunners()) {
-      if (context.getNoteId().equals(runner.getNoteId()) &&
-          context.getParagraphId().equals(runner.getParagraphId())) {
-        System.err.println("RUN");
-        runner.run();
-      }
-    }
-  }
 
   @Override
   public void signal(Signal signal) {
@@ -103,93 +143,38 @@ public class Clustering extends Application {
   public void run(ApplicationArgument arg, InterpreterContext context) throws ApplicationException,
       IOException {
 
-    if (this.get(context, "run") == null || this.get(context, "run").equals("idle")) {
-      // load resource from classpath
-      context.out.writeResource("clustering/Clustering.html");
+    // load resource from classpath
+    context.out.writeResource("clustering/Clustering.html");
 
-      this.put(context, "numCluster", 3);
-      this.put(context, "iteration", 10);
-      this.put(context, "run", "idle");
-      this.watch(context, "run");
-      this.context = context;
-    } else {
-      int numClusters = Integer.parseInt(this.get(context, "numCluster").toString());
-      int numIterations = Integer.parseInt(this.get(context, "iteration").toString());
+    this.put(context, "numCluster", 3);
+    this.put(context, "iteration", 10);
+    this.put(context, "run", "idle");
+    this.watch(context, "run");
+    this.context = context;
 
-      this.put(context, "run", "idle");
-
-      // get TableData
-      TableData tableData = (TableData) context.getResourcePool().get(
-          arg.getResource().location(), arg.getResource().name());
+    // get TableData
+    tableData = (TableData) context.getResourcePool().get(
+        arg.getResource().location(), arg.getResource().name());
 
 
-      // get spark context
-      Collection<ResourceInfo> infos = context.getResourcePool().search(
-          WellKnownResource.SPARK_CONTEXT.type() + ".*");
-      if (infos == null || infos.size() == 0) {
-        throw new ApplicationException("SparkContext not available");
-      }
-
-      Iterator<ResourceInfo> it = infos.iterator();
-      while (it.hasNext()) {
-        ResourceInfo info = it.next();
-        sc = (SparkContext) context.getResourcePool().get(info.name());
-        if (sc != null) {
-          break;
-        }
-      }
-
-      jsc = new JavaSparkContext(sc);
-
-
-      int col = -1;
-      // find first numeric column
-      ColumnDef[] columnDef = tableData.getColumnDef();
-
-
-      for (int c = 0; c < columnDef.length; c++) {
-        try {
-          Float.parseFloat((String) tableData.getData(0, c));
-          col = c;
-          break;
-        } catch (Exception e) {
-          continue;
-        }
-      }
-
-      if (col == -1) {
-        throw new ApplicationException("Numeric column not found");
-      }
-
-      LinkedList<Vector> vectors = new LinkedList<Vector>();
-
-      for (int i = 0 ; i < tableData.length(); i++) {
-        double val = Double.parseDouble(tableData.getData(i, col).toString());
-        vectors.add(Vectors.dense(val));
-      }
-
-
-      JavaRDD<Vector> inputVector = jsc.parallelize(vectors).cache();
-      KMeansModel clusters = KMeans.train(inputVector.rdd(), numClusters, numIterations);
-
-      StringWriter msg = new StringWriter();
-      // header
-      msg.write("%table ");
-      for (int c = 0; c < columnDef.length; c++) {
-        msg.write(columnDef[c].getName() + "\t");
-      }
-      msg.write("cluster\n");
-
-      for (int r = 0; r < tableData.length(); r++) {
-        for (int c = 0; c < columnDef.length; c++) {
-          msg.write(tableData.getData(r, c).toString() + "\t");
-        }
-        msg.write(clusters.predict(
-            Vectors.dense(Double.parseDouble(tableData.getData(r, col).toString()))) + "\n");
-      }
-
-      context.out.write(msg.toString());
+    // get spark context
+    Collection<ResourceInfo> infos = context.getResourcePool().search(
+        WellKnownResource.SPARK_CONTEXT.type() + ".*");
+    if (infos == null || infos.size() == 0) {
+      throw new ApplicationException("SparkContext not available");
     }
+
+    Iterator<ResourceInfo> it = infos.iterator();
+    while (it.hasNext()) {
+      ResourceInfo info = it.next();
+      sc = (SparkContext) context.getResourcePool().get(info.name());
+      if (sc != null) {
+        break;
+      }
+    }
+
+    jsc = new JavaSparkContext(sc);
+
   }
 
   @Override

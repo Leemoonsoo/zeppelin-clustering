@@ -1,7 +1,7 @@
 {
   mavenArtifact : "com.nflabs.zeppelin:clustering:0.0.1-SNAPSHOT",
   className : "com.nflabs.zeppelin.clustering.Clustering",
-  icon : "fa fa-object-group",
+  icon : "fa fa-gears",
   name : "Clustering",
   description : "Example clustering application",
   consume : [
